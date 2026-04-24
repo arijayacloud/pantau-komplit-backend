@@ -1,0 +1,37 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('ttd_remajas', function (Blueprint $table) {
+            $table->id();
+
+            $table->foreignId('remaja_id')
+                ->constrained('remaja_putris')
+                ->cascadeOnDelete();
+
+            $table->date('tanggal');
+
+            // jumlah tablet diminum hari itu
+            $table->integer('jumlah_minum')->default(0);
+
+            // opsional catatan
+            $table->text('catatan')->nullable();
+
+            $table->timestamps();
+
+            // optional: biar tidak double input tanggal sama
+            $table->unique(['remaja_id', 'tanggal']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('ttd_remajas');
+    }
+};
