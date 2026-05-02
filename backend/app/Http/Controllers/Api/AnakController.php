@@ -57,14 +57,13 @@ class AnakController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'nik' => 'nullable|string|max:255',
-
             'nama' => 'required|string|max:255',
             'tanggal_lahir' => 'required|date',
             'jenis_kelamin' => 'required|in:L,P',
-
             'anak_ke' => 'nullable|integer',
 
-            'ibu_id' => 'required|exists:ibus,id',
+            'ibu_id' => 'nullable|exists:ibus,id|required_without:nama_ibu',
+            'nama_ibu' => 'nullable|string|max:255|required_without:ibu_id',
             'kehamilan_id' => 'nullable|exists:kehamilans,id',
 
             'alamat' => 'nullable|string',
@@ -81,73 +80,86 @@ class AnakController extends Controller
 
         $data = $validator->validated();
 
-        // 🔥 CEK KEHAMILAN AKTIF (status = hamil)
-        $kehamilanAktif = \App\Models\Kehamilan::where('ibu_id', $data['ibu_id'])
-            ->where('status', 'hamil')
-            ->first();
-
-        if ($kehamilanAktif && empty($data['kehamilan_id'])) {
+        // wajib salah satu
+        if (
+            empty($request->input('ibu_id')) &&
+            empty($request->input('nama_ibu'))
+        ) {
             return response()->json([
                 'success' => false,
-                'message' => 'Masih ada kehamilan aktif, tidak bisa menambah anak tanpa menyelesaikan kehamilan'
-            ], 400);
+                'message' => 'Ibu atau nama ibu wajib diisi salah satu'
+            ], 422);
         }
 
-        // 🔥 JIKA MENGGUNAKAN KEHAMILAN_ID
-        if (!empty($data['kehamilan_id'])) {
+        /**
+         * 🔥 VALIDASI KEHAMILAN (HANYA JIKA ADA ibu_id)
+         */
+        if (!empty($data['ibu_id'])) {
 
-            $kehamilan = \App\Models\Kehamilan::find($data['kehamilan_id']);
+            $kehamilanAktif = \App\Models\Kehamilan::where('ibu_id', $data['ibu_id'])
+                ->where('status', 'hamil')
+                ->first();
 
-            // ❌ Pastikan kehamilan milik ibu yang sama
-            if ($kehamilan->ibu_id != $data['ibu_id']) {
+            if ($kehamilanAktif && empty($data['kehamilan_id'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Kehamilan tidak sesuai dengan ibu'
+                    'message' => 'Masih ada kehamilan aktif'
                 ], 400);
             }
 
-            // ❌ Tidak boleh kalau sudah selesai / gugur
-            if ($kehamilan->status != 'hamil') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Kehamilan sudah tidak aktif'
-                ], 400);
-            }
+            if (!empty($data['kehamilan_id'])) {
 
-            // ❌ Sudah punya anak
-            $sudahAdaAnak = Anak::where('kehamilan_id', $data['kehamilan_id'])->exists();
-            if ($sudahAdaAnak) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Kehamilan ini sudah memiliki anak'
-                ], 400);
+                $kehamilan = \App\Models\Kehamilan::find($data['kehamilan_id']);
+
+                if ($kehamilan->ibu_id != $data['ibu_id']) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Kehamilan tidak sesuai dengan ibu'
+                    ], 400);
+                }
+
+                if ($kehamilan->status != 'hamil') {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Kehamilan sudah tidak aktif'
+                    ], 400);
+                }
+
+                if (Anak::where('kehamilan_id', $data['kehamilan_id'])->exists()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Kehamilan ini sudah memiliki anak'
+                    ], 400);
+                }
             }
         }
 
-        // 🔥 AUTO STATUS ANAK
+        /**
+         * 🔥 AUTO STATUS
+         */
         $tanggalLahir = Carbon::parse($data['tanggal_lahir']);
         $umurBulan = $tanggalLahir->diffInMonths(now());
 
         if (!isset($data['status'])) {
-            if ($umurBulan <= 12) {
-                $data['status'] = 'bayi';
-            } elseif ($umurBulan <= 59) {
-                $data['status'] = 'balita';
-            } else {
-                $data['status'] = 'anak';
-            }
+            $data['status'] = $umurBulan <= 12 ? 'bayi'
+                : ($umurBulan <= 59 ? 'balita' : 'anak');
         }
 
-        // 🔥 AUTO ANAK KE
-        if (empty($data['anak_ke'])) {
-            $jumlahAnak = Anak::where('ibu_id', $data['ibu_id'])->count();
-            $data['anak_ke'] = $jumlahAnak + 1;
+        /**
+         * 🔥 AUTO ANAK KE
+         */
+        if (!empty($data['ibu_id'])) {
+            $data['anak_ke'] = Anak::where('ibu_id', $data['ibu_id'])->count() + 1;
         }
 
-        // ✅ SIMPAN ANAK
+        /**
+         * ✅ SIMPAN
+         */
         $anak = Anak::create($data);
 
-        // 🔥 UPDATE STATUS KEHAMILAN JADI SELESAI
+        /**
+         * 🔥 UPDATE KEHAMILAN
+         */
         if (!empty($data['kehamilan_id'])) {
             \App\Models\Kehamilan::where('id', $data['kehamilan_id'])
                 ->update(['status' => 'selesai']);
@@ -158,7 +170,7 @@ class AnakController extends Controller
             'message' => 'Data anak berhasil disimpan',
             'data' => $anak,
             'usia' => [
-                'bulan' => $tanggalLahir->diffInMonths(now()),
+                'bulan' => $umurBulan,
                 'tahun' => $tanggalLahir->age
             ]
         ], 201);
@@ -211,15 +223,14 @@ class AnakController extends Controller
 
         $validator = Validator::make($request->all(), [
             'nik' => 'sometimes|nullable|string|max:255',
-
             'nama' => 'sometimes|required|string|max:255',
             'tanggal_lahir' => 'sometimes|required|date',
             'jenis_kelamin' => 'sometimes|required|in:L,P',
 
             'anak_ke' => 'sometimes|nullable|integer',
 
-            'ibu_id' => 'sometimes|required|exists:ibus,id',
-            'kehamilan_id' => 'nullable|exists:kehamilans,id',
+            'ibu_id' => 'sometimes|nullable|exists:ibus,id',
+            'nama_ibu' => 'nullable|string|max:255',
 
             'alamat' => 'nullable|string',
             'status' => 'sometimes|in:bayi,balita,anak,tidak_aktif'
@@ -233,7 +244,22 @@ class AnakController extends Controller
             ], 422);
         }
 
-        $anak->update($validator->validated());
+        $data = $validator->validated();
+
+        // validasi ibu / nama ibu
+        if (
+            array_key_exists('ibu_id', $data) ||
+            array_key_exists('nama_ibu', $data)
+        ) {
+            if (empty($data['ibu_id']) && empty($data['nama_ibu'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ibu atau nama ibu wajib diisi salah satu'
+                ], 422);
+            }
+        }
+
+        $anak->update($data);
 
         return response()->json([
             'success' => true,

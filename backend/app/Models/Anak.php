@@ -12,15 +12,16 @@ class Anak extends Model
     protected $table = 'anaks';
 
     protected $fillable = [
+        'ibu_id',
+        'nama_ibu', // 🔥 WAJIB ADA
+        'kehamilan_id',
         'nik',
         'nama',
         'tanggal_lahir',
         'jenis_kelamin',
         'anak_ke',
+        'alamat',
         'status',
-        'ibu_id',
-        'kehamilan_id',
-        'alamat'
     ];
 
     protected $casts = [
@@ -51,5 +52,10 @@ class Anak extends Model
     public function pertumbuhan()
     {
         return $this->hasMany(PertumbuhanAnak::class)->latest();
+    }
+
+    public function getNamaIbuFinalAttribute()
+    {
+        return $this->ibu->nama ?? $this->nama_ibu ?? 'Tidak diketahui';
     }
 }
