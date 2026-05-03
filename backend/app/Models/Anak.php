@@ -12,9 +12,6 @@ class Anak extends Model
     protected $table = 'anaks';
 
     protected $fillable = [
-        'ibu_id',
-        'nama_ibu', // 🔥 WAJIB ADA
-        'kehamilan_id',
         'nik',
         'nama',
         'tanggal_lahir',

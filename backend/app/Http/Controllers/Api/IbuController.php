@@ -15,25 +15,21 @@ class IbuController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Ibu::with(['anak'])
+        $query = Ibu::query()
             ->withCount(['anak', 'kehamilan'])
             ->latest();
 
-        /// 🔍 SEARCH NAMA
+        // 🔍 SEARCH
         if ($request->search) {
             $query->where('nama', 'like', "%{$request->search}%");
         }
 
-        /// 📍 FILTER ALAMAT
+        // 📍 FILTER ALAMAT
         if ($request->alamat) {
             $query->where('alamat', 'like', "%{$request->alamat}%");
         }
 
-        /// 📊 FILTER STATUS
-        if ($request->status) {
-            $query->where('status', $request->status);
-        }
-
+        // 📊 FILTER STATUS
         if ($request->status) {
             $query->whereIn('status', [
                 'calon_ibu',
@@ -46,15 +42,16 @@ class IbuController extends Controller
         $data = $query->paginate(10)->withQueryString();
 
         $data->getCollection()->transform(function ($item) {
+            // 🔥 hitung status TANPA relasi eager load
             $item->status = $this->generateStatus($item);
 
-            // 🔥 FLAG KHUSUS
             $item->is_hamil = $item->kehamilan()
                 ->where('status', 'hamil')
                 ->exists();
 
             return $item;
         });
+
         return response()->json([
             'success' => true,
             'message' => 'Data ibu berhasil diambil',
@@ -109,9 +106,7 @@ class IbuController extends Controller
      */
     public function show($id)
     {
-        $ibu = Ibu::with(['anak', 'kehamilan'])
-            ->withCount(['anak', 'kehamilan'])
-            ->find($id);
+        $ibu = Ibu::withCount(['anak', 'kehamilan'])->find($id);
 
         if (!$ibu) {
             return response()->json([
@@ -120,7 +115,6 @@ class IbuController extends Controller
             ], 404);
         }
 
-        // 🔥 SYNC STATUS REALTIME (optional tapi bagus)
         $ibu->status = $this->generateStatus($ibu);
 
         return response()->json([
@@ -134,7 +128,7 @@ class IbuController extends Controller
      */
     public function update(Request $request, $id)
     {
-        $ibu = Ibu::with(['anak', 'kehamilan'])->find($id);
+        $ibu = Ibu::find($id);
 
         if (!$ibu) {
             return response()->json([
@@ -148,10 +142,6 @@ class IbuController extends Controller
             'nama' => 'sometimes|required|string|max:255',
             'tanggal_lahir' => 'nullable|date',
             'alamat' => 'nullable|string',
-
-            // ❌ STATUS TIDAK BOLEH DIINPUT SEMBARANG
-            // 'status' => ...
-
             'pendidikan' => 'nullable|string|max:255',
             'pekerjaan' => 'nullable|string|max:255',
             'no_hp' => 'nullable|string|max:15',
@@ -170,7 +160,7 @@ class IbuController extends Controller
 
         $ibu->update($data);
 
-        // 🔥 RECALCULATE STATUS OTOMATIS
+        // 🔥 hitung ulang status
         $ibu->status = $this->generateStatus($ibu);
         $ibu->save();
 
@@ -205,21 +195,23 @@ class IbuController extends Controller
 
     private function generateStatus($ibu)
     {
-        // 🔥 CEK KEHAMILAN AKTIF
+        // 🔥 cek hamil
         $hamil = $ibu->kehamilan()
             ->where('status', 'hamil')
             ->exists();
 
         if ($hamil) return 'hamil';
 
-        // 🔥 CEK ANAK (<= 24 bulan)
-        foreach ($ibu->anak as $anak) {
-            $umurBulan = \Carbon\Carbon::parse($anak->tanggal_lahir)->diffInMonths(now());
+        // 🔥 cek anak usia <= 24 bulan TANPA relasi
+        $punyaBayi = $ibu->anak()
+            ->whereNotNull('tanggal_lahir')
+            ->get()
+            ->contains(function ($anak) {
+                return \Carbon\Carbon::parse($anak->tanggal_lahir)
+                    ->diffInMonths(now()) <= 24;
+            });
 
-            if ($umurBulan <= 24) {
-                return 'menyusui';
-            }
-        }
+        if ($punyaBayi) return 'menyusui';
 
         return 'calon_ibu';
     }

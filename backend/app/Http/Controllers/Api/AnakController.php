@@ -62,8 +62,10 @@ class AnakController extends Controller
             'jenis_kelamin' => 'required|in:L,P',
             'anak_ke' => 'nullable|integer',
 
-            'ibu_id' => 'nullable|exists:ibus,id|required_without:nama_ibu',
-            'nama_ibu' => 'nullable|string|max:255|required_without:ibu_id',
+            // ✅ sekarang optional semua
+            'ibu_id' => 'nullable|exists:ibus,id',
+            'nama_ibu' => 'nullable|string|max:255',
+
             'kehamilan_id' => 'nullable|exists:kehamilans,id',
 
             'alamat' => 'nullable|string',
@@ -80,19 +82,9 @@ class AnakController extends Controller
 
         $data = $validator->validated();
 
-        // wajib salah satu
-        if (
-            empty($request->input('ibu_id')) &&
-            empty($request->input('nama_ibu'))
-        ) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ibu atau nama ibu wajib diisi salah satu'
-            ], 422);
-        }
-
         /**
-         * 🔥 VALIDASI KEHAMILAN (HANYA JIKA ADA ibu_id)
+         * 🔥 VALIDASI KEHAMILAN
+         * hanya jika ibu_id ADA
          */
         if (!empty($data['ibu_id'])) {
 
@@ -110,6 +102,13 @@ class AnakController extends Controller
             if (!empty($data['kehamilan_id'])) {
 
                 $kehamilan = \App\Models\Kehamilan::find($data['kehamilan_id']);
+
+                if (!$kehamilan) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Data kehamilan tidak ditemukan'
+                    ], 404);
+                }
 
                 if ($kehamilan->ibu_id != $data['ibu_id']) {
                     return response()->json([
@@ -147,6 +146,7 @@ class AnakController extends Controller
 
         /**
          * 🔥 AUTO ANAK KE
+         * hanya kalau ibu_id ADA
          */
         if (!empty($data['ibu_id'])) {
             $data['anak_ke'] = Anak::where('ibu_id', $data['ibu_id'])->count() + 1;
@@ -182,7 +182,6 @@ class AnakController extends Controller
     public function show($id)
     {
         $anak = Anak::with([
-            'ibu',
             'kehamilan',
             'asi',
             'pmba.detail'
@@ -229,8 +228,9 @@ class AnakController extends Controller
 
             'anak_ke' => 'sometimes|nullable|integer',
 
+            // ✅ sekarang full optional
             'ibu_id' => 'sometimes|nullable|exists:ibus,id',
-            'nama_ibu' => 'nullable|string|max:255',
+            'nama_ibu' => 'sometimes|nullable|string|max:255',
 
             'alamat' => 'nullable|string',
             'status' => 'sometimes|in:bayi,balita,anak,tidak_aktif'
@@ -246,19 +246,34 @@ class AnakController extends Controller
 
         $data = $validator->validated();
 
-        // validasi ibu / nama ibu
-        if (
-            array_key_exists('ibu_id', $data) ||
-            array_key_exists('nama_ibu', $data)
-        ) {
-            if (empty($data['ibu_id']) && empty($data['nama_ibu'])) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Ibu atau nama ibu wajib diisi salah satu'
-                ], 422);
-            }
+        /**
+         * ❌ HAPUS VALIDASI WAJIB IBU
+         * sekarang boleh kosong semua
+         */
+
+        /**
+         * 🔥 AUTO STATUS (kalau tanggal_lahir diubah)
+         */
+        if (isset($data['tanggal_lahir']) && !isset($data['status'])) {
+            $tanggalLahir = Carbon::parse($data['tanggal_lahir']);
+            $umurBulan = $tanggalLahir->diffInMonths(now());
+
+            $data['status'] = $umurBulan <= 12 ? 'bayi'
+                : ($umurBulan <= 59 ? 'balita' : 'anak');
         }
 
+        /**
+         * 🔥 AUTO ANAK KE (kalau ibu_id berubah)
+         */
+        if (array_key_exists('ibu_id', $data) && !empty($data['ibu_id'])) {
+            $data['anak_ke'] = Anak::where('ibu_id', $data['ibu_id'])
+                ->where('id', '!=', $anak->id)
+                ->count() + 1;
+        }
+
+        /**
+         * ✅ UPDATE
+         */
         $anak->update($data);
 
         return response()->json([
